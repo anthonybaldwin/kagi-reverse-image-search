@@ -1,0 +1,103 @@
+/* Notification styles */
+.kagi-image-search-notification {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #333;
+  color: white;
+  padding: 10px 20px;
+  border-radius: 5px;
+  z-index: 10000;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  transition: opacity 0.5s ease;
+  opacity: 1;
+}
+
+/* Selection overlay */
+.kagi-selection-overlay {
+  pointer-events: none;
+}
+
+/* Selection box styles */
+.kagi-selection-box {
+  position: fixed;
+  /* border: 2px dashed rgba(0, 0, 0, 0.3); */
+  background-color: rgba(255, 199, 0, 0.1);
+  z-index: 10001;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Corner styles for selection box */
+.kagi-selection-box::before,
+.kagi-selection-box::after,
+.kagi-selection-box .corner-top-right,
+.kagi-selection-box .corner-bottom-left {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 4px solid #FFC700;
+  background-color: transparent;
+  z-index: 10002;
+}
+
+/* Top-left corner */
+.kagi-selection-box::before {
+  top: 0;
+  left: 0;
+  border-right: none;
+  border-bottom: none;
+  border-top-left-radius: 8px;
+}
+
+/* Bottom-right corner */
+.kagi-selection-box::after {
+  bottom: 0;
+  right: 0;
+  border-left: none;
+  border-top: none;
+  border-bottom-right-radius: 8px;
+}
+
+/* Top-right corner */
+.kagi-selection-box .corner-top-right {
+  top: 0;
+  right: 0;
+  border-left: none;
+  border-bottom: none;
+  border-top-right-radius: 8px;
+}
+
+/* Bottom-left corner */
+.kagi-selection-box .corner-bottom-left {
+  bottom: 0;
+  left: 0;
+  border-right: none;
+  border-top: none;
+  border-bottom-left-radius: 8px;
+}
+
+
+/* Flash animation for selection mode */
+@keyframes kagi-flash {
+  0% { background-color: rgba(255, 199, 0, 0); }
+  50% { background-color: rgba(255, 199, 0, 0.2); }
+  100% { background-color: rgba(255, 199, 0, 0); }
+}
+
+.kagi-selection-mode-flash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 9999;
+  pointer-events: none;
+  animation: kagi-flash 0.5s ease-out;
+}
