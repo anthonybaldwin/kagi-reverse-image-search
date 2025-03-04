@@ -2,6 +2,8 @@
 
 This Chrome extension allows you to select an area on a webpage and search for it using Kagi Reverse Image Search.
 
+[![e.g.,](https://www.google.com/s2/favicons?domain=youtube.com&sz=64)](https://youtu.be/5lFQnl0vSeM)
+
 ## Features
 
 - Select any area on a webpage to capture as an image
@@ -43,3 +45,4 @@ You can customize these shortcuts in Chrome's Extensions page:
 ## Notes
 
 This extension is designed to work with Kagi's reverse image search features. It requires a Kagi account to be fully functional.
+
