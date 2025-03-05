@@ -2,7 +2,9 @@
 
 This Chrome extension allows you to select an area on a webpage and search for it using Kagi Reverse Image Search.
 
-[![e.g.,](https://www.google.com/s2/favicons?domain=youtube.com&sz=64)](https://youtu.be/5lFQnl0vSeM)
+<a href=https://youtu.be/5lFQnl0vSeM target=_blank>
+<img src=https://kagi.com/proxy/favicons?c=lQ30-cxV_E2Vdyqb6hrbuYgId7qu7hecjO7o1T7aqQDvUBfkmA14C3uQnHnus3Kb_TjuOIefAhejouJySifa5DYw7i2Sl05dxCViwLiSFns%3D width=50px/>
+</a>
 
 ## Features
 
