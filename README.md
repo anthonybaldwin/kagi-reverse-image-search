@@ -1,50 +1,72 @@
 # Kagi Reverse Image Search
 
-This Chrome extension allows you to select an area on a webpage and search for it using Kagi Reverse Image Search.
+A browser extension that lets you select any area on a webpage and search it using Kagi Reverse Image Search.
 
-<a href=https://youtu.be/5lFQnl0vSeM target=_blank>
-<img src=https://kagi.com/proxy/favicons?c=lQ30-cxV_E2Vdyqb6hrbuYgId7qu7hecjO7o1T7aqQDvUBfkmA14C3uQnHnus3Kb_TjuOIefAhejouJySifa5DYw7i2Sl05dxCViwLiSFns%3D width=50px/>
+<a href="https://youtu.be/5lFQnl0vSeM" target="_blank">
+  <img src="https://img.shields.io/badge/Watch-Demo-red?style=flat&logo=youtube" alt="Watch Demo"/>
 </a>
 
 ## Features
 
-- Select any area on a webpage to capture as an image
-- Search the selected area using Kagi's reverse image search
-- Simple and intuitive user interface with visual feedback
+- **Area Selection**: Click and drag to select any region on a webpage
+- **Instant Search**: Automatically uploads to Kagi's reverse image search
+- **Keyboard Shortcut**: Quick activation with Ctrl+Shift+K (Cmd+Shift+K on Mac)
+- **Privacy Pass Compatible**: Works seamlessly with Kagi's Privacy Pass
+- **Light/Dark Mode**: Automatically matches your Kagi theme preference
 
 ## Installation
 
-Since this extension is not published on the Chrome Web Store, you'll need to install it in developer mode:
+This extension is not on the Chrome Web Store. Install in developer mode:
 
-1. Download or clone this repository to your local machine
-2. Open Chrome and navigate to `chrome://extensions/`
-3. Enable "Developer mode" using the toggle in the top-right corner
-4. Click "Load unpacked" and select the directory containing this extension
-5. The extension should now be installed and visible in your Chrome toolbar
+1. Download or clone this repository
+2. Open your browser and go to the extensions page:
+   - Chrome: `chrome://extensions/`
+   - Edge: `edge://extensions/`
+   - Brave: `brave://extensions/`
+3. Enable **Developer mode** (toggle in top-right)
+4. Click **Load unpacked** and select this extension's folder
+5. The extension icon will appear in your toolbar
 
 ## Usage
 
-1. Click on the extension icon in your Chrome toolbar to directly enter selection mode
-2. Click and drag to select an area on the webpage
-3. The selected area will be captured and sent to Kagi for reverse image search
+1. Click the extension icon or press **Ctrl+Shift+K** (Cmd+Shift+K on Mac)
+2. A yellow flash indicates selection mode is active
+3. Click and drag to select an area
+4. Release to capture and search
+5. Press **Escape** to cancel selection
 
 ## Keyboard Shortcuts
 
-The extension supports keyboard shortcuts for quick access:
+| Action | Windows/Linux | Mac |
+|--------|---------------|-----|
+| Activate selection mode | Ctrl+Shift+K | Cmd+Shift+K |
+| Cancel selection | Escape | Escape |
 
-- **Ctrl+Shift+K** (Windows/Linux) or **Command+Shift+K** (Mac): Activate selection mode
-
-You can customize these shortcuts in Chrome's Extensions page:
-1. Go to `chrome://extensions`
-2. Click on "Keyboard shortcuts" at the bottom of the page
-3. Find "Kagi Reverse Image Search" and set your preferred shortcuts
+Customize shortcuts at `chrome://extensions/shortcuts`
 
 ## Requirements
 
-- Google Chrome browser
-- A Kagi account
+- Chromium-based browser (Chrome, Edge, Brave, Vivaldi, Opera)
+- Kagi account for search results
 
-## Notes
+## Limitations
 
-This extension is designed to work with Kagi's reverse image search features. It requires a Kagi account to be fully functional.
+The extension cannot run on:
+- Browser internal pages (`chrome://`, `edge://`, etc.)
+- Other extensions' pages
+- The Chrome Web Store
+- PDF viewer and certain special pages
 
+If you see "Unable to activate", try refreshing the page first.
+
+## Privacy
+
+This extension:
+- Only activates when you click the icon or use the shortcut
+- Only captures the area you select
+- Sends images directly to Kagi (no third parties)
+- Stores nothing permanently (theme preference only)
+
+## License
+
+ISC

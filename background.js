@@ -1,282 +1,235 @@
-// Global variables
+'use strict';
 
-// Initialize extension
-chrome.runtime.onInstalled.addListener(() => {
-  // Extension initialization
-});
+// Constants
+const KAGI_REVERSE_URL = 'https://kagi.com/reverse';
+const UI_HIDE_DELAY_MS = 150;
 
-// Handle extension icon click
-chrome.action.onClicked.addListener((tab) => {
-  // Check if the current tab is a valid tab for the extension
+// Restricted URL patterns where extension cannot run
+const RESTRICTED_URL_PATTERNS = [
+  'chrome://',
+  'chrome-extension://',
+  'chrome-search://',
+  'chrome-devtools://',
+  'devtools://',
+  'view-source:',
+  'about:',
+  'data:',
+  'file:',
+  'edge://',
+  'brave://',
+  'opera://',
+  'vivaldi://',
+  'https://chrome.google.com/webstore',
+  'https://microsoftedge.microsoft.com/addons',
+  'https://addons.opera.com'
+];
+
+/**
+ * Check if a URL is restricted (browser internal pages)
+ */
+function isRestrictedUrl(url) {
+  if (!url || url === '') return true;
+  return RESTRICTED_URL_PATTERNS.some(pattern => url.startsWith(pattern));
+}
+
+/**
+ * Show a notification to the user
+ */
+function showNotification(message, title = 'Kagi Reverse Image Search') {
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: title,
+    message: message,
+    priority: 2
+  });
+}
+
+/**
+ * Handle extension icon click
+ */
+chrome.action.onClicked.addListener(async (tab) => {
   const url = tab.url || '';
-  
-  // Don't run on chrome:// pages, chrome-extension:// pages, or other restricted URLs
-  if (url.startsWith('chrome://') || 
-      url.startsWith('chrome-extension://') || 
-      url.startsWith('chrome-search://') ||
-      url.startsWith('chrome-devtools://') ||
-      url.startsWith('devtools://') ||
-      url.startsWith('view-source:') ||
-      url.startsWith('about:') ||
-      url.startsWith('data:') ||
-      url.startsWith('file:') ||
-      url === '') {
-    // Show a notification that the extension can't run on this page
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon128.png',
-      title: 'Kagi Reverse Image Search',
-      message: 'This extension cannot be used on browser system pages.',
-      priority: 2
-    });
+
+  if (isRestrictedUrl(url)) {
+    showNotification('Cannot run on this page. Try a regular webpage.');
     return;
   }
-  
-  // Send message to content script to activate selection mode
-  chrome.tabs.sendMessage(tab.id, { 
-    action: 'toggleSelectionMode'
-  }, (response) => {
-    // Check if there was an error sending the message
-    if (chrome.runtime.lastError) {
-      console.error("Error sending message:", chrome.runtime.lastError);
-      
-      // Show a notification that the extension can't run on this page
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
-        title: 'Kagi Reverse Image Search',
-        message: 'This extension cannot be used on this page.',
-        priority: 2
+
+  // Try to send message to existing content script
+  try {
+    await chrome.tabs.sendMessage(tab.id, { action: 'toggleSelectionMode' });
+  } catch (error) {
+    // Content script not loaded - try to inject it
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
       });
+      await chrome.scripting.insertCSS({
+        target: { tabId: tab.id },
+        files: ['content.css']
+      });
+
+      // Now try sending the message again
+      await chrome.tabs.sendMessage(tab.id, { action: 'toggleSelectionMode' });
+    } catch (injectError) {
+      // Cannot inject - page doesn't allow it
+      console.error('Cannot activate on this page:', injectError.message);
+      showNotification('Cannot run on this page. Try refreshing first.');
     }
-  });
+  }
 });
 
-
-// Listen for messages from content script
+/**
+ * Listen for messages from content script
+ */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'searchImage') {
     searchImageWithKagi(message.imageUrl);
     sendResponse({ success: true });
-  } else if (message.action === 'captureSelectedArea') {
-    captureSelectedArea(message.area, sender.tab.id, sendResponse);
-    return true; // Keep the message channel open for async response
+    return false;
   }
-  return true; // Keep the message channel open for async responses
+
+  if (message.action === 'captureSelectedArea') {
+    captureSelectedArea(message.area, sender.tab.id, sendResponse);
+    return true; // Keep channel open for async response
+  }
+
+  return false;
 });
 
-// Capture selected area of the screen
+/**
+ * Capture selected area of the screen
+ */
 function captureSelectedArea(area, tabId, sendResponse) {
-  try {
-    // First, hide the selection UI
-    chrome.tabs.sendMessage(tabId, { action: 'hideSelectionUI' }, () => {
-      // Wait a bit for the UI to hide
-      setTimeout(() => {
-        // Capture the visible tab
-        chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
-          if (chrome.runtime.lastError) {
-            console.error("Error capturing tab:", chrome.runtime.lastError);
-            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+  // Validate area dimensions
+  if (!area || area.width <= 0 || area.height <= 0) {
+    sendResponse({ success: false, error: 'Invalid selection area' });
+    return;
+  }
+
+  // First, hide the selection UI
+  chrome.tabs.sendMessage(tabId, { action: 'hideSelectionUI' }, () => {
+    // Ignore any errors here - UI might already be hidden
+    if (chrome.runtime.lastError) {
+      // Silently continue
+    }
+
+    // Wait for UI to hide before capturing
+    setTimeout(() => {
+      chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
+        if (chrome.runtime.lastError) {
+          console.error('Error capturing tab:', chrome.runtime.lastError);
+          sendResponse({ success: false, error: 'Failed to capture screen. Please try again.' });
+          return;
+        }
+
+        if (!dataUrl) {
+          sendResponse({ success: false, error: 'No image data captured' });
+          return;
+        }
+
+        // Process the image in the tab context
+        chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          function: processImageInTab,
+          args: [dataUrl, area]
+        }).then((results) => {
+          if (results && results[0] && results[0].result) {
+            const result = results[0].result;
+
+            if (result.success) {
+              searchImageWithKagi(result.croppedDataUrl);
+              sendResponse({ success: true });
+            } else {
+              console.error('Image processing error:', result.error);
+              sendResponse({ success: false, error: result.error || 'Failed to process image' });
+            }
+          } else {
+            sendResponse({ success: false, error: 'Failed to process captured image' });
+          }
+        }).catch((error) => {
+          console.error('Script execution error:', error);
+          sendResponse({ success: false, error: 'Failed to process image: ' + error.message });
+        });
+      });
+    }, UI_HIDE_DELAY_MS);
+  });
+}
+
+/**
+ * Process image in tab context (injected function)
+ */
+function processImageInTab(dataUrl, area) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+
+      img.onload = function () {
+        try {
+          // Validate dimensions
+          if (area.width <= 0 || area.height <= 0) {
+            resolve({ success: false, error: 'Invalid selection dimensions' });
             return;
           }
 
-          // We need to use the chrome.scripting API to execute a script in the context of the tab
-          // This script will process the image data
-          chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            function: processImageInTab,
-            args: [dataUrl, area]
-          }).then((results) => {
-            if (results && results[0] && results[0].result) {
-              const result = results[0].result;
-              
-              if (result.success) {
-                // Search the image
-                searchImageWithKagi(result.croppedDataUrl);
-                sendResponse({ success: true });
-              } else {
-                console.error("Error in image processing:", result.error);
-                sendResponse({ success: false, error: result.error });
-              }
-            } else {
-              console.error("No results from script execution");
-              sendResponse({ success: false, error: "Failed to process image" });
-            }
-          }).catch((error) => {
-            console.error("Error executing script:", error);
-            sendResponse({ success: false, error: error.message });
-          });
-        });
-      }, 100); // Wait 100ms for the UI to hide
-    });
-  } catch (error) {
-    console.error("Error in captureSelectedArea:", error);
-    sendResponse({ success: false, error: error.message });
-  }
-  
-  return true; // Keep the message channel open for async response
-}
-
-// This function will be injected into the tab to process the image
-function processImageInTab(dataUrl, area) {
-  try {
-    return new Promise((resolve) => {
-      const img = new Image();
-      
-      img.onload = function() {
-        try {
-          // Create a canvas to crop the image
+          // Create canvas for cropping
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
-          
-          // Set canvas dimensions to the selected area
-          canvas.width = area.width;
-          canvas.height = area.height;
-          
-          // Draw the cropped image on the canvas
+
+          if (!ctx) {
+            resolve({ success: false, error: 'Failed to create canvas context' });
+            return;
+          }
+
+          // Account for device pixel ratio
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = area.width * dpr;
+          canvas.height = area.height * dpr;
+
+          // Draw the cropped region
           ctx.drawImage(
             img,
-            area.x, area.y, area.width, area.height,
-            0, 0, area.width, area.height
+            area.x * dpr, area.y * dpr, area.width * dpr, area.height * dpr,
+            0, 0, canvas.width, canvas.height
           );
-          
-          // Convert the canvas to a data URL
+
           const croppedDataUrl = canvas.toDataURL('image/png');
-          
-          resolve({
-            success: true,
-            croppedDataUrl: croppedDataUrl
-          });
+          resolve({ success: true, croppedDataUrl: croppedDataUrl });
         } catch (error) {
-          resolve({
-            success: false,
-            error: error.message
-          });
+          resolve({ success: false, error: 'Canvas operation failed: ' + error.message });
         }
       };
-      
-      img.onerror = function() {
-        resolve({
-          success: false,
-          error: "Failed to load captured image"
-        });
+
+      img.onerror = function () {
+        resolve({ success: false, error: 'Failed to load captured image' });
       };
-      
+
       img.src = dataUrl;
-    });
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message
-    };
-  }
+    } catch (error) {
+      resolve({ success: false, error: 'Image processing failed: ' + error.message });
+    }
+  });
 }
 
-// Search image with Kagi
+/**
+ * Search image with Kagi using form-based upload
+ */
 function searchImageWithKagi(imageUrl) {
-  if (!imageUrl) return;
-  
-  // Create a blob from the data URL if it's a data URL
-  if (imageUrl.startsWith('data:')) {
-    try {
-      // Convert data URL to blob
-      const byteString = atob(imageUrl.split(',')[1]);
-      const mimeType = imageUrl.split(',')[0].split(':')[1].split(';')[0];
-      const arrayBuffer = new ArrayBuffer(byteString.length);
-      const uint8Array = new Uint8Array(arrayBuffer);
-      
-      for (let i = 0; i < byteString.length; i++) {
-        uint8Array[i] = byteString.charCodeAt(i);
-      }
-      
-      const blob = new Blob([arrayBuffer], { type: mimeType });
-      
-      // Create a FormData object
-      const formData = new FormData();
-      formData.append('file', blob, 'screenshot.png');
-      
-      // Create a variable to track if we need to show the loading page
-      let loadingTabId = null;
-      let loadingTimeout = null;
-      
-      // Set a timeout to show the loading page if the upload takes more than 1 second
-      loadingTimeout = setTimeout(() => {
-        chrome.tabs.create({ url: chrome.runtime.getURL('loading.html') }, (tab) => {
-          loadingTabId = tab.id;
-        });
-      }, 1000);
-      
-      // Make the POST request to Kagi's reverse image search
-      fetch('https://kagi.com/reverse/upload', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Origin': 'https://kagi.com',
-          'Referer': 'https://kagi.com/reverse'
-        },
-        credentials: 'include' // Include cookies
-      })
-      .then(response => {
-        // Clear the timeout since we got a response
-        clearTimeout(loadingTimeout);
-        
-        if (response.ok) {
-          // If successful, open a new tab with the response URL
-          chrome.tabs.create({ url: response.url });
-          
-          // Close the loading tab if it was created
-          if (loadingTabId) {
-            chrome.tabs.remove(loadingTabId);
-          }
-        } else {
-          throw new Error(`Upload failed with status ${response.status}`);
-        }
-      })
-      .catch(error => {
-        // Clear the timeout since we got an error
-        clearTimeout(loadingTimeout);
-        console.error('Upload error:', error);
-        
-        // If there's an error, show the search.html page as a fallback
-        const reader = new FileReader();
-        reader.onloadend = function() {
-          if (loadingTabId) {
-            // Update the loading tab to show the search page
-            chrome.tabs.update(loadingTabId, { url: 'search.html' });
-            chrome.storage.local.set({
-              'imageData': reader.result,
-              'searchTab': loadingTabId
-            });
-          } else {
-            // Create a new tab with the search page
-            chrome.tabs.create({ url: 'search.html' }, (tab) => {
-              chrome.storage.local.set({
-                'imageData': reader.result,
-                'searchTab': tab.id
-              });
-            });
-          }
-        };
-        reader.readAsDataURL(blob);
-      });
-      
-      return;
-    } catch (error) {
-      console.error("Error creating blob:", error);
-    }
+  if (!imageUrl) {
+    showNotification('No image to search');
+    return;
   }
-  
-  // If we couldn't create a blob or it's not a data URL, open Kagi's reverse image search
+
   if (!imageUrl.startsWith('data:')) {
-    chrome.tabs.create({ url: 'https://kagi.com/reverse/upload' }, (tab) => {
-      // Show a notification to the user
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
-        title: 'Kagi Reverse Image Search',
-        message: 'Please upload the image manually on the Kagi page that just opened.',
-        priority: 2
-      });
-    });
+    chrome.tabs.create({ url: KAGI_REVERSE_URL });
+    showNotification('Please upload the image manually on the Kagi page.');
+    return;
   }
+
+  // Use form-based upload (works with Privacy Pass)
+  chrome.storage.local.set({ imageData: imageUrl }, () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('upload.html') });
+  });
 }

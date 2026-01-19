@@ -1,86 +1,63 @@
-// Content script to detect Kagi.com's theme and store it
+'use strict';
+
+/**
+ * Detect if a color is dark based on luminance
+ */
+function isDarkColor(colorString) {
+  if (!colorString || typeof colorString !== 'string') {
+    return false;
+  }
+
+  const rgbMatch = colorString.match(/\d+/g);
+  if (!rgbMatch || rgbMatch.length < 3) {
+    return false;
+  }
+
+  const [r, g, b] = rgbMatch.map(Number);
+
+  // Calculate relative luminance (ITU-R BT.709)
+  const luminance = (r * 299 + g * 587 + b * 114) / 1000;
+  return luminance < 128;
+}
+
+/**
+ * Detect and store Kagi theme preference (runs once per page load)
+ */
 function detectKagiTheme() {
   try {
-    // Check if we're on Kagi.com
+    // Verify we're on Kagi
     if (!window.location.hostname.includes('kagi.com')) {
       return;
     }
-    
-    // Get the computed style of the body
-    const computedStyle = getComputedStyle(document.body);
-    const backgroundColor = computedStyle.backgroundColor;
-    
-    // Check if the body has a class indicating the theme
-    const bodyClassList = document.body.classList;
+
+    // Determine theme
     let isDark = false;
-    
-    // First check for common class names
-    if (bodyClassList.contains('dark-theme') || bodyClassList.contains('dark')) {
+    const classList = document.body.classList;
+
+    // Check for explicit theme classes first
+    if (classList.contains('dark-theme') || classList.contains('dark')) {
       isDark = true;
-    } else if (bodyClassList.contains('light-theme') || bodyClassList.contains('light')) {
+    } else if (classList.contains('light-theme') || classList.contains('light')) {
       isDark = false;
     } else {
-      // If no specific class is found, check the computed style
+      // Fall back to computed background color
+      const computedStyle = window.getComputedStyle(document.body);
+      const backgroundColor = computedStyle.backgroundColor;
       isDark = isDarkColor(backgroundColor);
     }
-    
+
     const theme = isDark ? 'dark' : 'light';
-    
-// Store the theme preference
-    try {
-      chrome.storage.sync.set({ 'kagiTheme': theme }, function() {
-        if (chrome.runtime.lastError) {
-          console.log('Note: Could not store theme due to extension context change. This is normal during page refresh.');
-        } else {
-          console.log('Kagi theme detected and stored: ' + theme);
-        }
-      });
-    } catch (storageError) {
-      // This is likely due to extension context invalidation during page refresh
-      console.log('Note: Could not access storage. This is normal during page refresh.');
-    }
+
+    // Store theme preference
+    chrome.storage.sync.set({ kagiTheme: theme });
   } catch (error) {
-    console.error('Error detecting Kagi theme:', error);
+    // Silently fail - extension context may be invalidated
   }
 }
 
-// Helper function to determine if a color is dark
-function isDarkColor(color) {
-  // Convert the color to RGB and check its brightness
-  const rgb = color.match(/\d+/g);
-  if (!rgb) return false;
-  
-  const [r, g, b] = rgb.map(Number);
-  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-  return brightness < 128;
-}
-
-// Run the detection when the page is fully loaded
+// Detect theme once when page is ready
 if (document.readyState === 'complete') {
   detectKagiTheme();
 } else {
-  window.addEventListener('load', detectKagiTheme);
+  window.addEventListener('load', detectKagiTheme, { once: true });
 }
-
-// Also run the detection when the DOM content is loaded
-document.addEventListener('DOMContentLoaded', detectKagiTheme);
-
-// Run the detection periodically to catch theme changes
-const intervalId = setInterval(() => {
-  try {
-    detectKagiTheme();
-  } catch (error) {
-    // If we get an extension context invalidated error, clear the interval
-    if (error.message && error.message.includes('Extension context invalidated')) {
-      console.log('Extension context changed, clearing theme detection interval');
-      clearInterval(intervalId);
-    } else {
-      console.error('Error in theme detection interval:', error);
-    }
-  }
-}, 5000);
-
-// Clean up when the page is unloaded
-window.addEventListener('unload', () => {
-  clearInterval(intervalId);
-});

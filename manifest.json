@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kagi Reverse Image Search",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Select an area on a webpage and search it using Kagi Reverse Image Search",
   "permissions": ["storage", "activeTab", "scripting", "tabs", "notifications"],
   "host_permissions": ["http://*/*", "https://*/*"],
@@ -10,7 +10,8 @@
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
-    }
+    },
+    "default_title": "Select area for Kagi Image Search (Ctrl+Shift+K)"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -35,14 +36,14 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "search.html", 
-        "search.js", 
+        "search.html",
+        "search.js",
         "search-theme.js",
-        "loading.html",
-        "loading.js",
+        "upload.html",
+        "upload.js",
         "icons/*.png"
       ],
-      "matches": ["http://*/*", "https://*/*"]
+      "matches": ["<all_urls>"]
     }
   ],
   "commands": {
@@ -53,8 +54,5 @@
       },
       "description": "Activate selection mode"
     }
-  },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'"
   }
 }

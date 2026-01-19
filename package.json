@@ -1,0 +1,25 @@
+{
+  "name": "kagi-reverse-image-search",
+  "version": "1.1.0",
+  "description": "Select an area on a webpage and search it using Kagi Reverse Image Search",
+  "main": "background.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anthonybaldwin/kagi-reverse-image-search.git"
+  },
+  "keywords": [
+    "kagi",
+    "reverse-image-search",
+    "chrome-extension",
+    "browser-extension"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/anthonybaldwin/kagi-reverse-image-search/issues"
+  },
+  "homepage": "https://github.com/anthonybaldwin/kagi-reverse-image-search#readme"
+}
