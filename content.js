@@ -1,327 +1,413 @@
-// Global variables
-let isSelectionMode = false;
-let selectionBox = null;
-let startX = 0;
-let startY = 0;
-let endX = 0;
-let endY = 0;
-let isDragging = false;
+'use strict';
 
-// Listen for messages from the popup or background script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'toggleSelectionMode') {
-    toggleSelectionMode();
-    sendResponse({ success: true });
-  } else if (message.action === 'getSelectionModeStatus') {
-    sendResponse({ isSelectionMode: isSelectionMode });
-  } else if (message.action === 'hideSelectionUI') {
-    // Hide the selection box if it exists
-    if (selectionBox && selectionBox.parentNode) {
+// Prevent duplicate injection
+if (window.__kagiReverseImageSearchLoaded) {
+  // Script already loaded, don't re-execute
+} else {
+  window.__kagiReverseImageSearchLoaded = true;
+
+  // State management
+  const state = {
+    isSelectionMode: false,
+    isDragging: false,
+    startX: 0,
+    startY: 0,
+    endX: 0,
+    endY: 0
+  };
+
+  // DOM elements (created lazily)
+  let selectionBox = null;
+  let selectionOverlay = null;
+  let cursorStyle = null;
+
+  // Constants
+  const MIN_SELECTION_SIZE = 10;
+  const NOTIFICATION_DURATION = 3500;
+  const NOTIFICATION_FADE_DURATION = 400;
+
+  // Hover events to block during selection
+  const HOVER_EVENTS = [
+    'mouseenter', 'mouseleave', 'mouseover', 'mouseout',
+    'pointerover', 'pointerenter', 'pointerout', 'pointerleave'
+  ];
+
+  /**
+   * Listen for messages from background script
+   */
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    try {
+      switch (message.action) {
+        case 'toggleSelectionMode':
+          toggleSelectionMode();
+          sendResponse({ success: true });
+          break;
+
+        case 'getSelectionModeStatus':
+          sendResponse({ isSelectionMode: state.isSelectionMode });
+          break;
+
+        case 'hideSelectionUI':
+          hideSelectionUI();
+          sendResponse({ success: true });
+          break;
+
+        default:
+          sendResponse({ success: false, error: 'Unknown action' });
+      }
+    } catch (error) {
+      console.error('Message handler error:', error);
+      sendResponse({ success: false, error: error.message });
+    }
+    return false;
+  });
+
+  /**
+   * Toggle selection mode on/off
+   */
+  function toggleSelectionMode() {
+    state.isSelectionMode = !state.isSelectionMode;
+
+    if (state.isSelectionMode) {
+      enableSelectionMode();
+    } else {
+      disableSelectionMode();
+    }
+  }
+
+  /**
+   * Enable selection mode
+   */
+  function enableSelectionMode() {
+    // Add mouse event listeners
+    document.addEventListener('mousedown', handleMouseDown, true);
+    document.addEventListener('mousemove', handleMouseMove, true);
+    document.addEventListener('mouseup', handleMouseUp, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+
+    // Block hover effects
+    HOVER_EVENTS.forEach(eventType => {
+      document.addEventListener(eventType, preventHoverEffects, true);
+    });
+
+    // Create overlay to capture events
+    createSelectionOverlay();
+
+    // Add cursor style
+    createCursorStyle();
+
+    // Visual feedback
+    showFlashAnimation();
+    showNotification('Selection mode active. Drag to select an area, or press Escape to cancel.');
+  }
+
+  /**
+   * Disable selection mode
+   */
+  function disableSelectionMode() {
+    // Remove event listeners
+    document.removeEventListener('mousedown', handleMouseDown, true);
+    document.removeEventListener('mousemove', handleMouseMove, true);
+    document.removeEventListener('mouseup', handleMouseUp, true);
+    document.removeEventListener('keydown', handleKeyDown, true);
+
+    // Remove hover blocking
+    HOVER_EVENTS.forEach(eventType => {
+      document.removeEventListener(eventType, preventHoverEffects, true);
+    });
+
+    // Clean up DOM elements
+    removeSelectionOverlay();
+    removeCursorStyle();
+    removeSelectionBox();
+
+    // Reset state
+    state.isSelectionMode = false;
+    state.isDragging = false;
+    document.body.style.cursor = '';
+  }
+
+  /**
+   * Hide selection UI (called before screen capture)
+   */
+  function hideSelectionUI() {
+    if (selectionBox) {
       selectionBox.style.display = 'none';
     }
-    sendResponse({ success: true });
-  }
-});
-
-// Toggle selection mode
-function toggleSelectionMode() {
-  isSelectionMode = !isSelectionMode;
-  
-  if (isSelectionMode) {
-    enableSelectionMode();
-  } else {
-    disableSelectionMode();
-  }
-}
-
-// Create a transparent overlay to block hover effects
-let selectionOverlay = null;
-
-// Enable selection mode
-function enableSelectionMode() {
-  // Add event listeners for mouse actions
-  document.addEventListener('mousedown', handleMouseDown, true);
-  document.addEventListener('mousemove', handleMouseMove, true);
-  document.addEventListener('mouseup', handleMouseUp, true);
-  document.body.style.cursor = 'crosshair';
-  
-  // Create a transparent overlay to block hover effects
-  selectionOverlay = document.createElement('div');
-  selectionOverlay.className = 'kagi-selection-overlay';
-  selectionOverlay.style.position = 'fixed';
-  selectionOverlay.style.top = '0';
-  selectionOverlay.style.left = '0';
-  selectionOverlay.style.width = '100%';
-  selectionOverlay.style.height = '100%';
-  selectionOverlay.style.zIndex = '9990';
-  selectionOverlay.style.backgroundColor = 'transparent';
-  document.body.appendChild(selectionOverlay);
-  
-  // Add a style element to force cursor to remain crosshair
-  const cursorStyle = document.createElement('style');
-  cursorStyle.id = 'kagi-cursor-style';
-  cursorStyle.textContent = `
-    * {
-      cursor: crosshair !important;
+    if (selectionOverlay) {
+      selectionOverlay.style.display = 'none';
     }
-    .kagi-selection-box, .kagi-selection-box * {
-      cursor: crosshair !important;
+  }
+
+  /**
+   * Create selection overlay
+   */
+  function createSelectionOverlay() {
+    if (selectionOverlay) return;
+
+    selectionOverlay = document.createElement('div');
+    selectionOverlay.className = 'kagi-selection-overlay';
+    document.body.appendChild(selectionOverlay);
+  }
+
+  /**
+   * Remove selection overlay
+   */
+  function removeSelectionOverlay() {
+    if (selectionOverlay && selectionOverlay.parentNode) {
+      selectionOverlay.parentNode.removeChild(selectionOverlay);
+      selectionOverlay = null;
     }
-  `;
-  document.head.appendChild(cursorStyle);
-  
-  // Only prevent hover-related events on the page elements
-  const hoverEvents = [
-    'mouseenter', 'mouseleave', 'mouseover', 'mouseout',
-    'pointerover', 'pointerenter', 'pointerout', 'pointerleave'
-  ];
-  
-  // Add event listeners to the document to prevent hover effects
-  hoverEvents.forEach(eventType => {
-    document.addEventListener(eventType, preventHoverEffects, true);
-  });
-  
-  // Create and show flash animation
-  showFlashAnimation();
-  
-  // Show a notification to the user
-  showNotification('Selection mode enabled. Click and drag to select an area to search with Kagi.');
-}
+  }
 
-// Disable selection mode
-function disableSelectionMode() {
-  // Remove event listeners
-  document.removeEventListener('mousedown', handleMouseDown, true);
-  document.removeEventListener('mousemove', handleMouseMove, true);
-  document.removeEventListener('mouseup', handleMouseUp, true);
-  document.body.style.cursor = '';
-  
-  // Remove hover event prevention
-  const hoverEvents = [
-    'mouseenter', 'mouseleave', 'mouseover', 'mouseout',
-    'pointerover', 'pointerenter', 'pointerout', 'pointerleave'
-  ];
-  
-  hoverEvents.forEach(eventType => {
-    document.removeEventListener(eventType, preventHoverEffects, true);
-  });
-  
-  // Remove selection overlay
-  if (selectionOverlay && selectionOverlay.parentNode) {
-    selectionOverlay.parentNode.removeChild(selectionOverlay);
-    selectionOverlay = null;
-  }
-  
-  // Remove cursor style
-  const cursorStyle = document.getElementById('kagi-cursor-style');
-  if (cursorStyle && cursorStyle.parentNode) {
-    cursorStyle.parentNode.removeChild(cursorStyle);
-  }
-  
-  // Remove selection box if it exists
-  if (selectionBox && selectionBox.parentNode) {
-    selectionBox.parentNode.removeChild(selectionBox);
-    selectionBox = null;
-  }
-  
-  // Show a notification to the user
-  showNotification('Selection complete. Click the extension icon or use the shortcut to select again.');
-  
-  // Reset selection mode flag
-  isSelectionMode = false;
-}
+  /**
+   * Create cursor style element
+   */
+  function createCursorStyle() {
+    if (cursorStyle) return;
 
-// Show flash animation when entering selection mode
-function showFlashAnimation() {
-  const flash = document.createElement('div');
-  flash.className = 'kagi-selection-mode-flash';
-  document.body.appendChild(flash);
-  
-  // Remove the flash element after animation completes
-  setTimeout(() => {
-    if (flash && flash.parentNode) {
-      flash.parentNode.removeChild(flash);
+    cursorStyle = document.createElement('style');
+    cursorStyle.id = 'kagi-cursor-style';
+    cursorStyle.textContent = `
+      * { cursor: crosshair !important; }
+      .kagi-selection-box, .kagi-selection-box * { cursor: crosshair !important; }
+    `;
+    document.head.appendChild(cursorStyle);
+    document.body.style.cursor = 'crosshair';
+  }
+
+  /**
+   * Remove cursor style element
+   */
+  function removeCursorStyle() {
+    if (cursorStyle && cursorStyle.parentNode) {
+      cursorStyle.parentNode.removeChild(cursorStyle);
+      cursorStyle = null;
     }
-  }, 500);
-}
-
-// Prevent hover effects during selection
-function preventHoverEffects(event) {
-  // Skip our own elements
-  if (event.target.classList && 
-      (event.target.classList.contains('kagi-selection-box') || 
-       event.target.classList.contains('kagi-selection-mode-flash') ||
-       event.target.classList.contains('kagi-image-search-notification') ||
-       event.target.classList.contains('kagi-selection-overlay') ||
-       event.target.closest('.kagi-selection-box'))) {
-    return;
   }
-  
-  if (isSelectionMode) {
-    event.preventDefault();
-    event.stopPropagation();
-    return false;
-  }
-}
 
-// Handle mouse down event
-function handleMouseDown(event) {
-  // Only proceed if left mouse button is pressed
-  if (event.button !== 0) return;
-  
-  // Prevent default behavior
-  event.preventDefault();
-  event.stopPropagation();
-  
-  // Set starting coordinates
-  startX = event.clientX;
-  startY = event.clientY;
-  
-  // Create selection box if it doesn't exist
-  if (!selectionBox) {
+  /**
+   * Create selection box element
+   */
+  function createSelectionBox() {
+    if (selectionBox) return;
+
     selectionBox = document.createElement('div');
     selectionBox.className = 'kagi-selection-box';
-    
-    // Add corner elements for selection box
+
+    // Add corner elements
     const cornerTopRight = document.createElement('div');
     cornerTopRight.className = 'corner-top-right';
     selectionBox.appendChild(cornerTopRight);
-    
+
     const cornerBottomLeft = document.createElement('div');
     cornerBottomLeft.className = 'corner-bottom-left';
     selectionBox.appendChild(cornerBottomLeft);
-    
+
     document.body.appendChild(selectionBox);
   }
-  
-  // Position the selection box
-  selectionBox.style.left = startX + 'px';
-  selectionBox.style.top = startY + 'px';
-  selectionBox.style.width = '0';
-  selectionBox.style.height = '0';
-  selectionBox.style.display = 'block';
-  
-  // Set dragging flag
-  isDragging = true;
-}
 
-// Handle mouse move event
-function handleMouseMove(event) {
-  if (!isDragging) return;
-  
-  // Prevent default behavior
-  event.preventDefault();
-  event.stopPropagation();
-  
-  // Calculate current position
-  endX = event.clientX;
-  endY = event.clientY;
-  
-  // Calculate dimensions
-  const width = Math.abs(endX - startX);
-  const height = Math.abs(endY - startY);
-  
-  // Calculate top-left position
-  const left = Math.min(startX, endX);
-  const top = Math.min(startY, endY);
-  
-  // Update selection box
-  selectionBox.style.left = left + 'px';
-  selectionBox.style.top = top + 'px';
-  selectionBox.style.width = width + 'px';
-  selectionBox.style.height = height + 'px';
-}
+  /**
+   * Remove selection box element
+   */
+  function removeSelectionBox() {
+    if (selectionBox && selectionBox.parentNode) {
+      selectionBox.parentNode.removeChild(selectionBox);
+      selectionBox = null;
+    }
+  }
 
-// Handle mouse up event
-function handleMouseUp(event) {
-  if (!isDragging) return;
-  
-  // Prevent default behavior
-  event.preventDefault();
-  event.stopPropagation();
-  
-  // Reset dragging flag
-  isDragging = false;
-  
-  // Calculate final dimensions
-  const width = Math.abs(endX - startX);
-  const height = Math.abs(endY - startY);
-  
-  // Only proceed if the selection has a meaningful size
-  if (width > 10 && height > 10) {
-    // Calculate the position relative to the viewport
-    const left = Math.min(startX, endX);
-    const top = Math.min(startY, endY);
-    
+  /**
+   * Show flash animation when entering selection mode
+   */
+  function showFlashAnimation() {
+    const flash = document.createElement('div');
+    flash.className = 'kagi-selection-mode-flash';
+    document.body.appendChild(flash);
+
+    // Clean up after animation
+    setTimeout(() => {
+      if (flash && flash.parentNode) {
+        flash.parentNode.removeChild(flash);
+      }
+    }, 500);
+  }
+
+  /**
+   * Prevent hover effects during selection
+   */
+  function preventHoverEffects(event) {
+    if (!state.isSelectionMode) return;
+
+    // Allow our own elements
+    const target = event.target;
+    if (target && target.classList) {
+      const isOurElement = target.classList.contains('kagi-selection-box') ||
+        target.classList.contains('kagi-selection-mode-flash') ||
+        target.classList.contains('kagi-image-search-notification') ||
+        target.classList.contains('kagi-selection-overlay') ||
+        target.closest('.kagi-selection-box');
+
+      if (isOurElement) return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  /**
+   * Handle keydown events (Escape to cancel)
+   */
+  function handleKeyDown(event) {
+    if (event.key === 'Escape' && state.isSelectionMode) {
+      event.preventDefault();
+      event.stopPropagation();
+      disableSelectionMode();
+      showNotification('Selection cancelled.');
+    }
+  }
+
+  /**
+   * Handle mouse down event
+   */
+  function handleMouseDown(event) {
+    // Only handle left click
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Record start position
+    state.startX = event.clientX;
+    state.startY = event.clientY;
+    state.isDragging = true;
+
+    // Create and position selection box
+    createSelectionBox();
+    selectionBox.style.left = state.startX + 'px';
+    selectionBox.style.top = state.startY + 'px';
+    selectionBox.style.width = '0';
+    selectionBox.style.height = '0';
+    selectionBox.style.display = 'block';
+  }
+
+  /**
+   * Handle mouse move event
+   */
+  function handleMouseMove(event) {
+    if (!state.isDragging) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Update end position
+    state.endX = event.clientX;
+    state.endY = event.clientY;
+
+    // Calculate box dimensions
+    const width = Math.abs(state.endX - state.startX);
+    const height = Math.abs(state.endY - state.startY);
+    const left = Math.min(state.startX, state.endX);
+    const top = Math.min(state.startY, state.endY);
+
+    // Update selection box
+    if (selectionBox) {
+      selectionBox.style.left = left + 'px';
+      selectionBox.style.top = top + 'px';
+      selectionBox.style.width = width + 'px';
+      selectionBox.style.height = height + 'px';
+    }
+  }
+
+  /**
+   * Handle mouse up event
+   */
+  function handleMouseUp(event) {
+    if (!state.isDragging) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    state.isDragging = false;
+
+    // Calculate final dimensions
+    const width = Math.abs(state.endX - state.startX);
+    const height = Math.abs(state.endY - state.startY);
+
+    // Check minimum size
+    if (width < MIN_SELECTION_SIZE || height < MIN_SELECTION_SIZE) {
+      removeSelectionBox();
+      showNotification('Selection too small. Please select a larger area.');
+      return;
+    }
+
+    // Calculate selection area
+    const left = Math.min(state.startX, state.endX);
+    const top = Math.min(state.startY, state.endY);
+
     // Capture the selected area
     captureSelectedArea(left, top, width, height);
-  } else {
-    // Remove the selection box if it's too small
-    if (selectionBox && selectionBox.parentNode) {
-      selectionBox.parentNode.removeChild(selectionBox);
-      selectionBox = null;
-    }
   }
-}
 
-// Capture the selected area
-function captureSelectedArea(left, top, width, height) {
-  try {
-    // Send message to background script to capture the selected area
-    chrome.runtime.sendMessage({
-      action: 'captureSelectedArea',
-      area: {
-        x: left,
-        y: top,
-        width: width,
-        height: height
-      }
-    }, (response) => {
-      // Check for error in response
-      if (chrome.runtime.lastError) {
-        console.error("Error sending message:", chrome.runtime.lastError);
-        showNotification('Error: ' + chrome.runtime.lastError.message);
-      } else if (response && !response.success) {
-        console.error("Error in response:", response.error);
-        showNotification('Error: ' + (response.error || 'Unknown error'));
-      }
-      
-      // Remove the selection box
-      if (selectionBox && selectionBox.parentNode) {
-        selectionBox.parentNode.removeChild(selectionBox);
-        selectionBox = null;
-      }
-      
-      // Disable selection mode and reset the flag
+  /**
+   * Capture the selected area
+   */
+  function captureSelectedArea(left, top, width, height) {
+    try {
+      chrome.runtime.sendMessage({
+        action: 'captureSelectedArea',
+        area: { x: left, y: top, width: width, height: height }
+      }, (response) => {
+        // Handle extension context errors
+        if (chrome.runtime.lastError) {
+          console.error('Message error:', chrome.runtime.lastError);
+          showNotification('Connection lost. Please refresh the page and try again.');
+          cleanup();
+          return;
+        }
+
+        // Handle response errors
+        if (response && !response.success) {
+          console.error('Capture error:', response.error);
+          showNotification('Error: ' + (response.error || 'Unknown error occurred'));
+        }
+
+        cleanup();
+      });
+    } catch (error) {
+      console.error('captureSelectedArea error:', error);
+      showNotification('An error occurred. Please try again.');
+      cleanup();
+    }
+
+    function cleanup() {
+      removeSelectionBox();
       disableSelectionMode();
-      isSelectionMode = false;
-    });
-  } catch (error) {
-    console.error("Error in captureSelectedArea:", error);
-    showNotification('Error: ' + error.message);
-    
-    // Clean up
-    if (selectionBox && selectionBox.parentNode) {
-      selectionBox.parentNode.removeChild(selectionBox);
-      selectionBox = null;
     }
-    disableSelectionMode();
   }
-}
 
-// Show a notification to the user
-function showNotification(message) {
-  const notification = document.createElement('div');
-  notification.className = 'kagi-image-search-notification';
-  notification.textContent = message;
-  
-  document.body.appendChild(notification);
-  
-  // Remove the notification after a few seconds
-  setTimeout(() => {
-    notification.style.opacity = '0';
+  /**
+   * Show a notification toast
+   */
+  function showNotification(message) {
+    // Remove any existing notifications
+    const existing = document.querySelectorAll('.kagi-image-search-notification');
+    existing.forEach(el => el.remove());
+
+    // Create notification
+    const notification = document.createElement('div');
+    notification.className = 'kagi-image-search-notification';
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    // Auto-remove after delay
     setTimeout(() => {
-      document.body.removeChild(notification);
-    }, 500);
-  }, 3000);
+      notification.style.opacity = '0';
+      setTimeout(() => {
+        if (notification.parentNode) {
+          notification.parentNode.removeChild(notification);
+        }
+      }, NOTIFICATION_FADE_DURATION);
+    }, NOTIFICATION_DURATION);
+  }
 }

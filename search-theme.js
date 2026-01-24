@@ -1,15 +1,30 @@
-// Apply Kagi theme from storage
+'use strict';
+
+/**
+ * Apply Kagi theme from storage
+ */
 function applyKagiTheme() {
-    chrome.storage.sync.get(['kagiTheme'], function(result) {
-        if (result.kagiTheme === 'dark') {
-            document.body.classList.add('dark-theme');
-        } else {
-            document.body.classList.remove('dark-theme');
-        }
+  try {
+    chrome.storage.sync.get(['kagiTheme'], (result) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Could not load theme preference:', chrome.runtime.lastError);
+        return;
+      }
+
+      if (result.kagiTheme === 'dark') {
+        document.body.classList.add('dark-theme');
+      } else {
+        document.body.classList.remove('dark-theme');
+      }
     });
+  } catch (error) {
+    console.warn('Theme application error:', error);
+  }
 }
 
-// Apply theme when page loads
-document.addEventListener('DOMContentLoaded', function() {
-    applyKagiTheme();
-});
+// Apply theme when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', applyKagiTheme);
+} else {
+  applyKagiTheme();
+}
