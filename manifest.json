@@ -1,9 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Kagi Reverse Image Search",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Select an area on a webpage and search it using Kagi Reverse Image Search",
-  "permissions": ["storage", "activeTab", "scripting", "tabs", "notifications"],
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "notifications",
+    "contextMenus"
+  ],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_icon": {
@@ -24,26 +32,12 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
-      "css": ["content.css"]
+      "js": ["content.js"]
     },
     {
       "matches": ["*://*.kagi.com/*"],
       "js": ["kagi-theme-detector.js"],
       "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "search.html",
-        "search.js",
-        "search-theme.js",
-        "upload.html",
-        "upload.js",
-        "icons/*.png"
-      ],
-      "matches": ["<all_urls>"]
     }
   ],
   "commands": {

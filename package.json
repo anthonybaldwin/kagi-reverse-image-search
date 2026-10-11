@@ -1,6 +1,6 @@
 {
   "name": "kagi-reverse-image-search",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Select an area on a webpage and search it using Kagi Reverse Image Search",
   "main": "background.js",
   "scripts": {

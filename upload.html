@@ -2,18 +2,173 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Fetching ...</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Searching Kagi…</title>
   <style>
-    body { margin: 0; }
+    :root {
+      color-scheme: light dark;
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #6b6b6b;
+      --card: #ffffff;
+      --card-border: rgba(0, 0, 0, 0.06);
+      --accent: #FFC700;
+      --shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+      --button-bg: #f0f0f0;
+      --button-hover: #e4e4e4;
+    }
     @media (prefers-color-scheme: dark) {
-      body { background: #191919; }
+      :root:not([data-theme="light"]) {
+        --bg: #191919;
+        --fg: #f0f0f0;
+        --muted: #a0a0a0;
+        --card: #232323;
+        --card-border: rgba(255, 255, 255, 0.08);
+        --shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+        --button-bg: #333333;
+        --button-hover: #3f3f3f;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg: #191919;
+      --fg: #f0f0f0;
+      --muted: #a0a0a0;
+      --card: #232323;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+      --button-bg: #333333;
+      --button-hover: #3f3f3f;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { height: 100%; }
+
+    body {
+      display: grid;
+      place-items: center;
+      padding: 24px 16px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+    }
+
+    .card {
+      width: min(100%, 440px);
+      padding: 36px 32px 32px;
+      border-radius: 16px;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      box-shadow: var(--shadow);
+      text-align: center;
+      animation: rise 260ms ease-out;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    .logo { width: 120px; height: auto; margin: 0 auto 24px; display: block; color: var(--fg); }
+
+    .preview {
+      position: relative;
+      display: none;
+      max-width: 100%;
+      margin: 0 auto 24px;
+      border-radius: 10px;
+      overflow: hidden;
+      background:
+        linear-gradient(45deg, rgba(128,128,128,.15) 25%, transparent 25%, transparent 75%, rgba(128,128,128,.15) 75%),
+        linear-gradient(45deg, rgba(128,128,128,.15) 25%, transparent 25%, transparent 75%, rgba(128,128,128,.15) 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 8px 8px;
+      box-shadow: 0 0 0 3px var(--accent);
+    }
+    .preview.show { display: inline-block; }
+    .preview img { display: block; max-width: 100%; max-height: 260px; }
+
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 199, 0, 0.25);
+      border-top-color: var(--accent);
+      animation: spin 800ms linear infinite;
+      flex: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .sub { margin-top: 8px; font-size: 13px; color: var(--muted); }
+
+    .fallback { display: none; margin-top: 20px; }
+    .fallback.show { display: block; }
+    .fallback p { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+    .button {
+      display: inline-block;
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: 0;
+      background: var(--accent);
+      color: #000;
+      font: 600 14px/1.4 inherit;
+      font-family: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      transition: filter 120ms ease, transform 120ms ease;
+    }
+    .button:hover { filter: brightness(0.95); transform: translateY(-1px); }
+    .button.secondary { background: var(--button-bg); color: var(--fg); }
+    .button.secondary:hover { background: var(--button-hover); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .card { animation: none; }
+      .spinner { animation-duration: 1.6s; }
     }
   </style>
 </head>
 <body>
-  <form id="uploadForm" style="display:none" method="POST" action="https://kagi.com/reverse/upload" enctype="multipart/form-data">
+  <main class="card" role="status" aria-live="polite">
+    <svg class="logo" viewBox="0 0 235 125" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Kagi">
+      <path d="M217.188 86.0043V91.3462H232.873V29.1132H217.188V86.0043Z" fill="currentColor"/>
+      <path d="M224.898 20.2991C230.477 20.2991 235 15.755 235 10.1496C235 4.54412 230.477 0 224.898 0C219.319 0 214.796 4.54412 214.796 10.1496C214.796 15.755 219.319 20.2991 224.898 20.2991Z" fill="currentColor"/>
+      <path d="M182.63 100.16H160.033C153.919 100.16 152.856 93.4829 153.919 90.812C154.451 89.4765 155.78 87.6068 156.843 86.2714C161.097 88.6752 166.148 90.0107 171.464 90.0107C188.478 90.0107 202.036 76.1218 202.036 59.2949C202.036 50.2137 198.048 42.2009 191.934 36.3248L192.731 35.5235C194.326 33.9209 196.719 32.8526 199.111 33.1197L202.833 33.3868V18.6966H196.453C189.01 18.6966 182.895 23.2372 180.237 29.6474C177.579 28.8462 174.655 28.312 171.73 28.312C154.717 28.312 141.159 42.2009 141.159 59.0278C141.159 65.7051 143.286 72.1154 147.007 77.1902C146.476 77.7244 145.678 78.2586 145.147 78.5257C144.881 78.7927 144.615 79.0598 144.349 79.3269C138.235 85.203 135.311 92.6816 136.906 101.229C137.703 105.769 141.691 110.577 145.678 113.248C148.337 115.118 151.793 115.919 155.248 115.919L180.769 114.85C183.693 114.85 186.351 116.186 187.946 118.857L191.136 125L206.821 119.658L204.162 113.782C200.175 105.502 191.934 100.16 182.63 100.16ZM171.73 44.6047C179.705 44.6047 186.351 51.2821 186.351 59.2949C186.351 67.3077 179.705 73.9851 171.73 73.9851C163.755 73.9851 157.109 67.3077 157.109 59.2949C157.109 51.015 163.489 44.6047 171.73 44.6047Z" fill="currentColor"/>
+      <path d="M93.5748 28.0449C77.6246 28.8461 64.3327 41.6667 63.2694 57.6923C61.9402 76.656 76.8271 92.4145 95.1698 92.4145C101.284 92.4145 106.867 88.9423 111.652 86.0043V91.6132H127.336V59.0278C126.539 41.1325 111.652 27.2436 93.5748 28.0449ZM95.1698 77.4573C85.5997 77.4573 78.1563 69.7115 78.1563 60.3632C78.1563 50.7479 85.8655 43.2692 95.1698 43.2692C104.74 43.2692 112.183 51.0149 112.183 60.3632C112.449 69.7115 104.74 77.4573 95.1698 77.4573Z" fill="currentColor"/>
+      <path d="M63.535 29.1133H41.4705L22.3303 48.344L15.6844 55.0214V18.1624H0V91.6133H15.6844V64.1026L22.3303 70.7799V70.5128L43.0655 91.6133H65.13L31.3687 59.562L63.535 29.1133Z" fill="currentColor"/>
+    </svg>
+
+    <div id="preview" class="preview"><img id="previewImage" alt="Selected image"></div>
+
+    <div class="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="statusText">Searching Kagi…</span>
+    </div>
+    <p id="subText" class="sub">Uploading your selection to Kagi Reverse Image Search.</p>
+
+    <div id="fallback" class="fallback">
+      <p>This is taking longer than usual. You can keep waiting, or upload the image yourself.</p>
+      <div class="actions">
+        <a id="downloadLink" class="button" download="selection.png">Download image</a>
+        <a id="openKagiLink" class="button secondary" href="https://kagi.com/reverse">Open Kagi Reverse Search</a>
+      </div>
+    </div>
+  </main>
+
+  <form id="uploadForm" hidden method="POST" action="https://kagi.com/reverse/upload" enctype="multipart/form-data">
     <input type="file" name="file" id="fileInput">
   </form>
+
   <script src="upload.js"></script>
 </body>
 </html>
