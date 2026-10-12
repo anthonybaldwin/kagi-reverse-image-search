@@ -2,7 +2,11 @@
 
 // Constants
 const KAGI_REVERSE_URL = 'https://kagi.com/reverse';
-const UI_HIDE_DELAY_MS = 150;
+const UPLOAD_PAGE = 'upload.html';
+const CAPTURE_DELAY_MS = 60; // let the page repaint after the selection UI is hidden
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const MENU_SELECT_AREA = 'kagi-ris-select-area';
+const MENU_SEARCH_IMAGE = 'kagi-ris-search-image';
 
 // Restricted URL patterns where extension cannot run
 const RESTRICTED_URL_PATTERNS = [
@@ -20,6 +24,7 @@ const RESTRICTED_URL_PATTERNS = [
   'opera://',
   'vivaldi://',
   'https://chrome.google.com/webstore',
+  'https://chromewebstore.google.com',
   'https://microsoftedge.microsoft.com/addons',
   'https://addons.opera.com'
 ];
@@ -28,208 +33,254 @@ const RESTRICTED_URL_PATTERNS = [
  * Check if a URL is restricted (browser internal pages)
  */
 function isRestrictedUrl(url) {
-  if (!url || url === '') return true;
-  return RESTRICTED_URL_PATTERNS.some(pattern => url.startsWith(pattern));
+  if (!url) return true;
+  return RESTRICTED_URL_PATTERNS.some((pattern) => url.startsWith(pattern));
 }
 
 /**
- * Show a notification to the user
+ * Show a system notification to the user
  */
-function showNotification(message, title = 'Kagi Reverse Image Search') {
+function notify(message, title = 'Kagi Reverse Image Search') {
   chrome.notifications.create({
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: title,
-    message: message,
-    priority: 2
+    title,
+    message,
+    priority: 1
   });
 }
 
-/**
- * Handle extension icon click
- */
-chrome.action.onClicked.addListener(async (tab) => {
-  const url = tab.url || '';
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  if (isRestrictedUrl(url)) {
-    showNotification('Cannot run on this page. Try a regular webpage.');
-    return;
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Turn selection mode on (or off) in the given tab, injecting the content
+ * script first if the page was loaded before the extension was installed.
+ */
+async function activateSelection(tab) {
+  if (!tab || !tab.id || isRestrictedUrl(tab.url || '')) {
+    notify('Cannot run on this page. Try a regular webpage.');
+    return false;
   }
 
-  // Try to send message to existing content script
   try {
     await chrome.tabs.sendMessage(tab.id, { action: 'toggleSelectionMode' });
-  } catch (error) {
-    // Content script not loaded - try to inject it
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['content.js']
-      });
-      await chrome.scripting.insertCSS({
-        target: { tabId: tab.id },
-        files: ['content.css']
-      });
+    return true;
+  } catch (_) {
+    // No content script in this tab yet - fall through and inject it
+  }
 
-      // Now try sending the message again
-      await chrome.tabs.sendMessage(tab.id, { action: 'toggleSelectionMode' });
-    } catch (injectError) {
-      // Cannot inject - page doesn't allow it
-      console.error('Cannot activate on this page:', injectError.message);
-      showNotification('Cannot run on this page. Try refreshing first.');
-    }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['content.js']
+    });
+    await chrome.tabs.sendMessage(tab.id, { action: 'toggleSelectionMode' });
+    return true;
+  } catch (error) {
+    console.error('Cannot activate on this page:', error);
+    notify('Cannot run on this page. Try refreshing it first.');
+    return false;
+  }
+}
+
+/**
+ * Extension icon click / keyboard shortcut
+ */
+chrome.action.onClicked.addListener((tab) => {
+  activateSelection(tab);
+});
+
+/**
+ * Context menu entries
+ */
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: MENU_SELECT_AREA,
+      title: 'Select an area to search with Kagi',
+      contexts: ['page', 'frame', 'selection', 'link', 'image', 'video']
+    });
+    chrome.contextMenus.create({
+      id: MENU_SEARCH_IMAGE,
+      title: 'Search this image with Kagi',
+      contexts: ['image']
+    });
+  });
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === MENU_SELECT_AREA) {
+    activateSelection(tab);
+  } else if (info.menuItemId === MENU_SEARCH_IMAGE && info.srcUrl) {
+    searchImageUrl(info.srcUrl, tab);
   }
 });
 
 /**
- * Listen for messages from content script
+ * Messages from the content script
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'searchImage') {
-    searchImageWithKagi(message.imageUrl);
-    sendResponse({ success: true });
-    return false;
-  }
-
-  if (message.action === 'captureSelectedArea') {
-    captureSelectedArea(message.area, sender.tab.id, sendResponse);
-    return true; // Keep channel open for async response
+  if (message && message.action === 'captureSelectedArea' && sender.tab) {
+    captureSelectedArea(message.area, message.viewport, sender.tab)
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => {
+        console.error('Capture failed:', error);
+        sendResponse({ success: false, error: error.message || 'Capture failed' });
+      });
+    return true; // keep the channel open for the async response
   }
 
   return false;
 });
 
 /**
- * Capture selected area of the screen
+ * Screenshot the visible tab, crop it to the selection and hand it to the upload page
  */
-function captureSelectedArea(area, tabId, sendResponse) {
-  // Validate area dimensions
-  if (!area || area.width <= 0 || area.height <= 0) {
-    sendResponse({ success: false, error: 'Invalid selection area' });
-    return;
+async function captureSelectedArea(area, viewport, tab) {
+  if (!area || !(area.width > 0) || !(area.height > 0)) {
+    throw new Error('Invalid selection area');
   }
 
-  // First, hide the selection UI
-  chrome.tabs.sendMessage(tabId, { action: 'hideSelectionUI' }, () => {
-    // Ignore any errors here - UI might already be hidden
-    if (chrome.runtime.lastError) {
-      // Silently continue
-    }
+  // Give the page a moment to repaint without the selection UI
+  await sleep(CAPTURE_DELAY_MS);
 
-    // Wait for UI to hide before capturing
-    setTimeout(() => {
-      chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
-        if (chrome.runtime.lastError) {
-          console.error('Error capturing tab:', chrome.runtime.lastError);
-          sendResponse({ success: false, error: 'Failed to capture screen. Please try again.' });
-          return;
-        }
+  let dataUrl;
+  try {
+    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } catch (error) {
+    console.error('captureVisibleTab failed:', error);
+    throw new Error('Failed to capture the screen. Please try again.');
+  }
+  if (!dataUrl) {
+    throw new Error('No image data captured');
+  }
 
-        if (!dataUrl) {
-          sendResponse({ success: false, error: 'No image data captured' });
-          return;
-        }
-
-        // Process the image in the tab context
-        chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          function: processImageInTab,
-          args: [dataUrl, area]
-        }).then((results) => {
-          if (results && results[0] && results[0].result) {
-            const result = results[0].result;
-
-            if (result.success) {
-              searchImageWithKagi(result.croppedDataUrl);
-              sendResponse({ success: true });
-            } else {
-              console.error('Image processing error:', result.error);
-              sendResponse({ success: false, error: result.error || 'Failed to process image' });
-            }
-          } else {
-            sendResponse({ success: false, error: 'Failed to process captured image' });
-          }
-        }).catch((error) => {
-          console.error('Script execution error:', error);
-          sendResponse({ success: false, error: 'Failed to process image: ' + error.message });
-        });
-      });
-    }, UI_HIDE_DELAY_MS);
-  });
+  const cropped = await cropImage(dataUrl, area, viewport);
+  await openUploadPage(cropped, 'selection.png', tab);
 }
 
 /**
- * Process image in tab context (injected function)
+ * Crop a screenshot (data URL) to a CSS-pixel area of the viewport.
+ * Runs entirely in the service worker, so nothing has to be injected into the page.
  */
-function processImageInTab(dataUrl, area) {
-  return new Promise((resolve) => {
-    try {
-      const img = new Image();
+async function cropImage(dataUrl, area, viewport) {
+  const blob = await (await fetch(dataUrl)).blob();
+  const bitmap = await createImageBitmap(blob);
 
-      img.onload = function () {
-        try {
-          // Validate dimensions
-          if (area.width <= 0 || area.height <= 0) {
-            resolve({ success: false, error: 'Invalid selection dimensions' });
-            return;
-          }
-
-          // Create canvas for cropping
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-
-          if (!ctx) {
-            resolve({ success: false, error: 'Failed to create canvas context' });
-            return;
-          }
-
-          // Account for device pixel ratio
-          const dpr = window.devicePixelRatio || 1;
-          canvas.width = area.width * dpr;
-          canvas.height = area.height * dpr;
-
-          // Draw the cropped region
-          ctx.drawImage(
-            img,
-            area.x * dpr, area.y * dpr, area.width * dpr, area.height * dpr,
-            0, 0, canvas.width, canvas.height
-          );
-
-          const croppedDataUrl = canvas.toDataURL('image/png');
-          resolve({ success: true, croppedDataUrl: croppedDataUrl });
-        } catch (error) {
-          resolve({ success: false, error: 'Canvas operation failed: ' + error.message });
-        }
-      };
-
-      img.onerror = function () {
-        resolve({ success: false, error: 'Failed to load captured image' });
-      };
-
-      img.src = dataUrl;
-    } catch (error) {
-      resolve({ success: false, error: 'Image processing failed: ' + error.message });
+  try {
+    // Screenshots are in device pixels; the selection is in CSS pixels.
+    // devicePixelRatio already includes page zoom. If the content script could
+    // not report it, fall back to comparing the screenshot with the viewport.
+    let scale = viewport && viewport.dpr > 0 ? viewport.dpr : 0;
+    if (!scale && viewport && viewport.width > 0) {
+      scale = bitmap.width / viewport.width;
     }
-  });
+    scale = scale || 1;
+
+    const sx = clamp(Math.round(area.x * scale), 0, bitmap.width);
+    const sy = clamp(Math.round(area.y * scale), 0, bitmap.height);
+    const sw = clamp(Math.round(area.width * scale), 0, bitmap.width - sx);
+    const sh = clamp(Math.round(area.height * scale), 0, bitmap.height - sy);
+
+    if (sw < 1 || sh < 1) {
+      throw new Error('Selection is outside the visible area');
+    }
+
+    const canvas = new OffscreenCanvas(sw, sh);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    const out = await canvas.convertToBlob({ type: 'image/png' });
+    return blobToDataUrl(out);
+  } finally {
+    bitmap.close();
+  }
 }
 
 /**
- * Search image with Kagi using form-based upload
+ * Fetch an image (from the "Search this image" context menu) and send it to Kagi
  */
-function searchImageWithKagi(imageUrl) {
-  if (!imageUrl) {
-    showNotification('No image to search');
-    return;
+async function searchImageUrl(srcUrl, tab) {
+  try {
+    let dataUrl = srcUrl;
+    let filename = 'image.png';
+
+    if (!srcUrl.startsWith('data:')) {
+      const response = await fetch(srcUrl, { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const type = blob.type || '';
+      if (type && !type.startsWith('image/') && type !== 'application/octet-stream') {
+        throw new Error(`Not an image (${type})`);
+      }
+      if (blob.size > MAX_IMAGE_BYTES) {
+        throw new Error('Image is too large');
+      }
+      filename = 'image.' + extensionForMime(type);
+      dataUrl = await blobToDataUrl(blob);
+    }
+
+    await openUploadPage(dataUrl, filename, tab);
+  } catch (error) {
+    console.error('Image search failed:', error);
+    notify('Could not load that image. Try selecting the area on the page instead.');
+  }
+}
+
+function extensionForMime(type) {
+  switch (type) {
+    case 'image/jpeg': return 'jpg';
+    case 'image/gif': return 'gif';
+    case 'image/webp': return 'webp';
+    case 'image/avif': return 'avif';
+    case 'image/svg+xml': return 'svg';
+    case 'image/bmp': return 'bmp';
+    default: return 'png';
+  }
+}
+
+/**
+ * Stash the image and open the upload page next to the source tab
+ */
+async function openUploadPage(dataUrl, filename, sourceTab) {
+  if (!dataUrl) {
+    throw new Error('No image to search');
   }
 
-  if (!imageUrl.startsWith('data:')) {
-    chrome.tabs.create({ url: KAGI_REVERSE_URL });
-    showNotification('Please upload the image manually on the Kagi page.');
-    return;
+  try {
+    await chrome.storage.local.set({
+      pendingUpload: { dataUrl, filename, createdAt: Date.now() }
+    });
+  } catch (error) {
+    console.error('Could not store image:', error);
+    throw new Error('Image is too large to hand off. Try a smaller selection.');
   }
 
-  // Use form-based upload (works with Privacy Pass)
-  chrome.storage.local.set({ imageData: imageUrl }, () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('upload.html') });
-  });
+  const createProperties = { url: chrome.runtime.getURL(UPLOAD_PAGE) };
+  if (sourceTab && typeof sourceTab.index === 'number') {
+    createProperties.index = sourceTab.index + 1;
+    createProperties.windowId = sourceTab.windowId;
+  }
+  await chrome.tabs.create(createProperties);
+}
+
+/**
+ * Convert a Blob to a base64 data URL (FileReader-free, works in service workers)
+ */
+async function blobToDataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${blob.type || 'image/png'};base64,${btoa(binary)}`;
 }
