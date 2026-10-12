@@ -53,6 +53,10 @@ Customize shortcuts at `chrome://extensions/shortcuts`
 - Chromium-based browser (Chrome, Edge, Brave, Vivaldi, Opera)
 - Kagi account for search results
 
+## Incognito
+
+To use the extension in Incognito windows, open `chrome://extensions`, click **Details** on the extension and turn on **Allow in Incognito**. A search started from an Incognito window then runs in that window with your Incognito Kagi session, not your regular one.
+
 ## Limitations
 
 The extension cannot run on:
