@@ -3,6 +3,7 @@
   "name": "Kagi Reverse Image Search",
   "version": "1.2",
   "description": "Select an area on a webpage and search it using Kagi Reverse Image Search",
+  "incognito": "split",
   "permissions": [
     "storage",
     "unlimitedStorage",

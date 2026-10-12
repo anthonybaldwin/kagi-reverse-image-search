@@ -97,22 +97,35 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 /**
- * Context menu entries
+ * Context menu entries.
+ * The extension runs in "split" incognito mode, so a second instance of this
+ * worker can exist for incognito windows. Menu items are shared between the
+ * two, so creation has to tolerate an item that already exists.
  */
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
+    createMenuItem({
       id: MENU_SELECT_AREA,
       title: 'Select an area to search with Kagi',
       contexts: ['page', 'frame', 'selection', 'link', 'image', 'video']
     });
-    chrome.contextMenus.create({
+    createMenuItem({
       id: MENU_SEARCH_IMAGE,
       title: 'Search this image with Kagi',
       contexts: ['image']
     });
   });
 });
+
+function createMenuItem(properties) {
+  chrome.contextMenus.create(properties, () => {
+    // "duplicate id" from the other instance is harmless; surface anything else
+    const error = chrome.runtime.lastError;
+    if (error && !/duplicate/i.test(error.message)) {
+      console.error('Context menu error:', error.message);
+    }
+  });
+}
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === MENU_SELECT_AREA) {
@@ -264,12 +277,24 @@ async function openUploadPage(dataUrl, filename, sourceTab) {
     throw new Error('Image is too large to hand off. Try a smaller selection.');
   }
 
+  // Open next to the source tab, in its window. For an incognito source that
+  // keeps the Kagi search in the incognito session (the manifest's "split"
+  // incognito mode is what lets an extension page live in an incognito tab).
   const createProperties = { url: chrome.runtime.getURL(UPLOAD_PAGE) };
-  if (sourceTab && typeof sourceTab.index === 'number') {
-    createProperties.index = sourceTab.index + 1;
+  if (sourceTab && typeof sourceTab.windowId === 'number') {
     createProperties.windowId = sourceTab.windowId;
+    if (typeof sourceTab.index === 'number') {
+      createProperties.index = sourceTab.index + 1;
+    }
   }
-  await chrome.tabs.create(createProperties);
+
+  try {
+    await chrome.tabs.create(createProperties);
+  } catch (error) {
+    // The source window may have closed meanwhile; fall back to the current window
+    console.warn('Could not open next to the source tab:', error);
+    await chrome.tabs.create({ url: createProperties.url });
+  }
 }
 
 /**
