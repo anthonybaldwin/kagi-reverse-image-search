@@ -9,6 +9,7 @@
   const MIN_SELECTION_SIZE = 10;
   const TOAST_DURATION_MS = 3200;
   const TOAST_FADE_MS = 250;
+  const FREEZE_MS = 450; // how long the released selection holds on screen before capture
   const HOST_TAG = 'kagi-reverse-image-search';
 
   // Events the page must not see while selection mode is active
@@ -17,6 +18,7 @@
   const state = {
     active: false,
     dragging: false,
+    frozen: false,
     startX: 0,
     startY: 0,
     endX: 0,
@@ -28,6 +30,7 @@
     host: null,
     root: null,
     overlay: null,
+    dim: null,
     guideX: null,
     guideY: null,
     box: null,
@@ -50,33 +53,42 @@
       line-height: 1.4;
       color: #fff;
       --kagi-yellow: #FFC700;
-      --dim: rgba(10, 10, 12, 0.42);
+      --dim: rgba(10, 10, 12, 0.5);
+      --blur: 4px;
     }
     :host([hidden]) { display: none !important; }
 
+    /* Invisible layer that swallows pointer events and carries the cursor */
     .overlay {
       position: absolute;
       inset: 0;
       pointer-events: none;
       cursor: crosshair;
-      background: var(--dim);
-      opacity: 0;
-      transition: opacity 160ms ease, background-color 120ms ease;
       box-shadow: inset 0 0 0 0 var(--kagi-yellow);
     }
     :host(.active) .overlay {
       pointer-events: auto;
-      opacity: 1;
       animation: kagi-pulse 520ms ease-out;
-    }
-    :host(.dragging) .overlay {
-      background: transparent;
     }
     @keyframes kagi-pulse {
       0%   { box-shadow: inset 0 0 0 0 rgba(255, 199, 0, 0); }
       35%  { box-shadow: inset 0 0 0 4px rgba(255, 199, 0, 0.9); }
       100% { box-shadow: inset 0 0 0 0 rgba(255, 199, 0, 0); }
     }
+
+    /* Frosted dim over the page. While dragging, a clip-path punches the
+       selection out of it so only the surroundings are blurred and darkened. */
+    .dim {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: var(--dim);
+      -webkit-backdrop-filter: blur(var(--blur));
+      backdrop-filter: blur(var(--blur));
+      opacity: 0;
+      transition: opacity 180ms ease;
+    }
+    :host(.active) .dim { opacity: 1; }
 
     /* Crosshair guide lines that follow the pointer before a drag starts */
     .guide {
@@ -89,16 +101,36 @@
     .guide-y { top: 0; bottom: 0; width: 1px; }
     :host(.active.pointer:not(.dragging)) .guide { display: block; }
 
-    /* Selection box. The huge box-shadow dims everything outside of it. */
+    /* Selection box (the surroundings are dimmed by .dim's cut-out) */
     .box {
       position: absolute;
       display: none;
       box-sizing: border-box;
-      border-radius: 6px;
       pointer-events: none;
-      box-shadow: 0 0 0 1px rgba(255, 199, 0, 0.9), 0 0 0 100vmax var(--dim);
+      box-shadow: 0 0 0 1px rgba(255, 199, 0, 0.9);
     }
-    :host(.dragging) .box { display: block; }
+    :host(.dragging) .box, :host(.frozen) .box { display: block; }
+
+    /* Shutter: a short freeze with a flash once the selection is released */
+    .box::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+    }
+    :host(.frozen) .box::after { animation: kagi-shutter 420ms ease-out forwards; }
+    :host(.frozen) .corner { animation: kagi-snap 420ms ease-out forwards; }
+    @keyframes kagi-shutter {
+      0%   { opacity: 0.85; }
+      100% { opacity: 0; }
+    }
+    @keyframes kagi-snap {
+      0%   { transform: scale(1); }
+      30%  { transform: scale(1.25); }
+      100% { transform: scale(1); }
+    }
 
     .corner {
       position: absolute;
@@ -107,10 +139,10 @@
       border: 3px solid var(--kagi-yellow);
       filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.5));
     }
-    .corner.tl { top: -3px; left: -3px; border-right: 0; border-bottom: 0; border-top-left-radius: 8px; }
-    .corner.tr { top: -3px; right: -3px; border-left: 0; border-bottom: 0; border-top-right-radius: 8px; }
-    .corner.bl { bottom: -3px; left: -3px; border-right: 0; border-top: 0; border-bottom-left-radius: 8px; }
-    .corner.br { bottom: -3px; right: -3px; border-left: 0; border-top: 0; border-bottom-right-radius: 8px; }
+    .corner.tl { top: -3px; left: -3px; border-right: 0; border-bottom: 0; }
+    .corner.tr { top: -3px; right: -3px; border-left: 0; border-bottom: 0; }
+    .corner.bl { bottom: -3px; left: -3px; border-right: 0; border-top: 0; }
+    .corner.br { bottom: -3px; right: -3px; border-left: 0; border-top: 0; }
 
     /* Size badge */
     .badge {
@@ -189,7 +221,7 @@
     .toast.error svg { color: #f87171; }
 
     @media (prefers-reduced-motion: reduce) {
-      .overlay, .hint, .toast { transition: none; animation: none; }
+      .overlay, .dim, .hint, .toast, .box::after, .corner { transition: none; animation: none; }
     }
   `;
 
@@ -261,10 +293,12 @@
 
     state.active = false;
     state.dragging = false;
+    state.frozen = false;
 
     if (ui.host) {
-      ui.host.classList.remove('active', 'dragging', 'pointer');
+      ui.host.classList.remove('active', 'dragging', 'pointer', 'frozen');
       ui.host.hidden = false;
+      ui.dim.style.clipPath = '';
     }
     unmountIfIdle();
   }
@@ -280,7 +314,7 @@
   }
 
   function onKeyDown(event) {
-    if (!state.active || event.key !== 'Escape') return;
+    if (!state.active || state.frozen || event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
     deactivate();
@@ -292,6 +326,7 @@
     if (state.dragging) {
       state.dragging = false;
       ui.host.classList.remove('dragging');
+      ui.dim.style.clipPath = '';
     }
   }
 
@@ -299,7 +334,7 @@
     if (!state.active) return;
     event.preventDefault();
     event.stopPropagation();
-    if (event.button !== 0) return;
+    if (event.button !== 0 || state.frozen) return;
 
     state.dragging = true;
     state.startX = state.endX = clampX(event.clientX);
@@ -312,6 +347,7 @@
   function onMouseMove(event) {
     if (!state.active) return;
     event.stopPropagation();
+    if (state.frozen) return;
 
     if (!state.dragging) {
       updateGuides(event.clientX, event.clientY);
@@ -338,12 +374,23 @@
     ui.host.classList.remove('dragging');
 
     if (rect.width < MIN_SELECTION_SIZE || rect.height < MIN_SELECTION_SIZE) {
+      ui.dim.style.clipPath = '';
       updateGuides(event.clientX, event.clientY);
       showToast('Selection too small. Drag out a larger area.', 'info');
       return;
     }
 
-    capture(rect);
+    // Shutter: hold the selection on screen for a beat, then capture
+    state.frozen = true;
+    ui.host.classList.remove('pointer');
+    ui.host.classList.add('frozen');
+    setTimeout(() => {
+      if (state.active && state.frozen) capture(rect);
+    }, reducedMotion() ? 0 : FREEZE_MS);
+  }
+
+  function reducedMotion() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
 
   /* ------------------------------------------------------------------ */
@@ -381,6 +428,12 @@
     ui.box.style.top = rect.y + 'px';
     ui.box.style.width = rect.width + 'px';
     ui.box.style.height = rect.height + 'px';
+
+    // Punch the selection out of the frosted dim layer (even-odd polygon with a hole)
+    const x1 = rect.x, y1 = rect.y, x2 = rect.x + rect.width, y2 = rect.y + rect.height;
+    ui.dim.style.clipPath =
+      `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ` +
+      `${x1}px ${y1}px, ${x1}px ${y2}px, ${x2}px ${y2}px, ${x2}px ${y1}px, ${x1}px ${y1}px)`;
 
     const width = Math.round(rect.width);
     const height = Math.round(rect.height);
@@ -453,6 +506,7 @@
       style.textContent = STYLES;
 
       ui.overlay = el('div', 'overlay');
+      ui.dim = el('div', 'dim');
       ui.guideX = el('div', 'guide guide-x');
       ui.guideY = el('div', 'guide guide-y');
 
@@ -466,7 +520,7 @@
 
       ui.toast = el('div', 'toast');
 
-      ui.root.append(style, ui.overlay, ui.guideX, ui.guideY, ui.box, ui.hint, ui.toast);
+      ui.root.append(style, ui.overlay, ui.dim, ui.guideX, ui.guideY, ui.box, ui.hint, ui.toast);
     }
 
     (document.documentElement || document.body).appendChild(ui.host);
